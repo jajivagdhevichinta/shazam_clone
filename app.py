@@ -1,6 +1,9 @@
 from flask import Flask, request, jsonify, render_template
-import requests, os, subprocess
+import requests, os, subprocess, sys
 from werkzeug.utils import secure_filename
+
+# Force stdout to flush immediately for Render logs
+sys.stdout.reconfigure(line_buffering=True)
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16 MB
@@ -28,22 +31,23 @@ def identify_song():
 
         # Save uploaded file
         audio_file.save(input_path)
-        print("DEBUG: Input file size:", os.path.getsize(input_path), "bytes")
+        print("DEBUG: Input file size:", os.path.getsize(input_path), "bytes", flush=True)
 
         # Convert to WAV using ffmpeg
-        subprocess.run(['ffmpeg', '-i', input_path, output_path, '-y'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        subprocess.run(['ffmpeg', '-i', input_path, output_path, '-y'],
+                       stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
         if os.path.exists(output_path):
-            print("DEBUG: Output WAV size:", os.path.getsize(output_path), "bytes")
+            print("DEBUG: Output WAV size:", os.path.getsize(output_path), "bytes", flush=True)
         else:
-            print("DEBUG: Output WAV not created")
+            print("DEBUG: Output WAV not created", flush=True)
 
         # Send WAV file to Audd.io
         with open(output_path, 'rb') as f:
             data = {'api_token': AUDD_API_KEY, 'return': 'title,artist'}
             response = requests.post(AUDD_API_URL, data=data, files={'file': f}, timeout=30)
 
-        print("DEBUG: Audd.io raw response:", response.text)
+        print("DEBUG: Audd.io raw response:", response.text, flush=True)
 
         # Cleanup temp files
         if os.path.exists(input_path):
