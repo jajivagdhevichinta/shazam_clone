@@ -42,3 +42,7 @@ This is a Shazam-like web application where users can record audio or hum a tune
 3.ACRCloud API generates an audio fingerprint and matches it to songs
 
 4.Song title & artist is returned and displayed on the website
+
+🔗 Live Demo
+
+Website: https://shazam-clone.onrender.com
