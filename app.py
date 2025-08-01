@@ -1,15 +1,16 @@
 from flask import Flask, request, jsonify, render_template
-import requests, os, subprocess, sys
+import os, sys, hmac, hashlib, base64, time, requests
 from werkzeug.utils import secure_filename
 
-# Force stdout to flush immediately for Render logs
 sys.stdout.reconfigure(line_buffering=True)
 
 app = Flask(__name__)
-app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16 MB
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
 
-AUDD_API_URL = "https://api.audd.io/"
-AUDD_API_KEY = "c959a75808e0a1d3c30b6094059820d1"  # Replace with your real key
+# Replace with your ACRCloud credentials
+HOST = "identify-ap-southeast-1.acrcloud.com"
+ACCESS_KEY = "b7cc485c54c21f3313743ed19697ec14"
+ACCESS_SECRET = "WgEB1VRVuYV9zF4l8i8VVNyGeNebD4XwdnWWoPBU"
 
 @app.route('/')
 def index():
@@ -27,44 +28,49 @@ def identify_song():
 
         filename = secure_filename(audio_file.filename)
         input_path = f"temp_input.{filename.split('.')[-1]}"
-        output_path = "temp_output.wav"
-
-        # Save uploaded file
         audio_file.save(input_path)
-        print("DEBUG: Input file size:", os.path.getsize(input_path), "bytes", flush=True)
+        file_size = os.path.getsize(input_path)
+        print("DEBUG: Input file size:", file_size, "bytes", flush=True)
 
-        # Convert to WAV using ffmpeg
-        subprocess.run(['ffmpeg', '-i', input_path, output_path, '-y'],
-                       stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        # Prepare ACRCloud signature
+        http_method = "POST"
+        http_uri = "/v1/identify"
+        data_type = "audio"
+        signature_version = "1"
+        timestamp = str(int(time.time()))
 
-        if os.path.exists(output_path):
-            print("DEBUG: Output WAV size:", os.path.getsize(output_path), "bytes", flush=True)
-        else:
-            print("DEBUG: Output WAV not created", flush=True)
+        string_to_sign = "\n".join([http_method, http_uri, ACCESS_KEY, data_type, signature_version, timestamp])
+        sign = base64.b64encode(
+            hmac.new(ACCESS_SECRET.encode('utf-8'), string_to_sign.encode('utf-8'), digestmod=hashlib.sha1).digest()
+        ).decode('utf-8')
 
-        # Send WAV file to Audd.io
-        with open(output_path, 'rb') as f:
-            data = {'api_token': AUDD_API_KEY, 'return': 'title,artist'}
-            response = requests.post(AUDD_API_URL, data=data, files={'file': f}, timeout=30)
+        # Send file to ACRCloud
+        files = {'sample': open(input_path, 'rb')}
+        data = {
+            'access_key': ACCESS_KEY,
+            'data_type': data_type,
+            'signature_version': signature_version,
+            'signature': sign,
+            'sample_bytes': file_size,
+            'timestamp': timestamp,
+        }
 
-        print("DEBUG: Audd.io raw response:", response.text, flush=True)
+        response = requests.post(f"http://{HOST}/v1/identify", files=files, data=data, timeout=30)
+        print("DEBUG: ACRCloud raw response:", response.text, flush=True)
 
-        # Cleanup temp files
-        if os.path.exists(input_path):
-            os.remove(input_path)
-        if os.path.exists(output_path):
-            os.remove(output_path)
+        os.remove(input_path)
 
-        # Process API response
         if response.status_code != 200:
             return jsonify({'error': f'API request failed with status {response.status_code}'}), 500
 
-        api_response = response.json()
-        if api_response.get('status') == 'success' and api_response.get('result'):
-            result = api_response['result']
-            return jsonify({'title': result.get('title', 'Unknown'), 'artist': result.get('artist', 'Unknown Artist')})
-        else:
-            return jsonify({'title': None, 'artist': None})
+        result = response.json()
+        if result.get('status', {}).get('code') == 0:
+            music = result.get('metadata', {}).get('music', [])
+            if music:
+                song = music[0]
+                return jsonify({'title': song.get('title', 'Unknown'),
+                                'artist': song.get('artists', [{}])[0].get('name', 'Unknown Artist')})
+        return jsonify({'title': None, 'artist': None})
 
     except Exception as e:
         return jsonify({'error': f'Server error: {str(e)}'}), 500
